@@ -42,7 +42,7 @@ def get_text_for_tts_infer(text, language_str, hps, device, symbol_to_id=None):
         if language_str == "ZH":
             bert = bert
             ja_bert = torch.zeros(768, len(phone))
-        elif language_str in ["JP", "EN", "ZH_MIX_EN", 'KR', 'SP', 'ES', 'FR', 'DE', 'RU']:
+        elif language_str in ["JP", "EN", "ZH_MIX_EN", 'KR', 'SP', 'ES', 'FR', 'DE', 'RU', 'MS']:
             ja_bert = bert
             bert = torch.zeros(1024, len(phone))
         else:
@@ -231,6 +231,10 @@ def load_wav_to_torch_new(full_path):
     return audio_norm, sampling_rate
 
 def load_wav_to_torch_librosa(full_path, sr):
+    if os.path.exists('/workspace'):
+        splitted = os.path.split(full_path)
+        new_folder = os.path.join('/workspace', os.path.split(splitted[0])[1])
+        full_path = os.path.join(new_folder, splitted[1])
     audio_norm, sampling_rate = librosa.load(full_path, sr=sr, mono=True)
     return torch.FloatTensor(audio_norm.astype(np.float32)), sampling_rate
 
@@ -389,6 +393,12 @@ def get_logger(model_dir, filename="train.log"):
     h.setLevel(logging.DEBUG)
     h.setFormatter(formatter)
     logger.addHandler(h)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+    
     return logger
 
 

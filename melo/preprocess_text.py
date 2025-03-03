@@ -6,9 +6,23 @@ from typing import Optional
 from tqdm import tqdm
 import click
 from text.cleaner import clean_text_bert
+from glob import glob
 import os
 import torch
+import itertools
+from multiprocess import Pool
 from text.symbols import symbols, num_languages, num_tones
+
+def chunks(l, num_chunks):
+    chunk_size = len(l) // num_chunks
+    remainder = len(l) % num_chunks
+    start = 0
+    for i in range(num_chunks):
+        extra = 1 if i < remainder else 0
+        end = start + chunk_size + extra
+        yield (l[start:end], i)
+        start = end
+
 
 @click.command()
 @click.option(
@@ -27,6 +41,7 @@ from text.symbols import symbols, num_languages, num_tones
 @click.option("--val-per-spk", default=4)
 @click.option("--max-val-total", default=8)
 @click.option("--clean/--no-clean", default=True)
+@click.option("--num_device", default=1)
 def main(
     metadata: str,
     cleaned_path: Optional[str],
@@ -36,6 +51,7 @@ def main(
     val_per_spk: int,
     max_val_total: int,
     clean: bool,
+    num_device: int,
 ):
     if train_path is None:
         train_path = os.path.join(os.path.dirname(metadata), 'train.list')
@@ -50,39 +66,58 @@ def main(
     if torch.xpu.is_available(): device = "xpu"
 
     if clean:
-        out_file = open(cleaned_path, "w", encoding="utf-8")
-        new_symbols = []
-        for line in tqdm(open(metadata, encoding="utf-8").readlines()):
-            try:
-                utt, spk, language, text = line.strip().split("|")
-                norm_text, phones, tones, word2ph, bert = clean_text_bert(text, language, device=device)
-                for ph in phones:
-                    if ph not in symbols and ph not in new_symbols:
-                        new_symbols.append(ph)
-                        print('update!, now symbols:')
-                        print(new_symbols)
-                        with open(f'{language}_symbol.txt', 'w') as f:
-                            f.write(f'{new_symbols}')
+        def loop(lines):
+            lines, index = lines
+            print(len(lines), index)
+            os.environ['CUDA_VISIBLE_DEVICES'] = str(index)
 
-                assert len(phones) == len(tones)
-                assert len(phones) == sum(word2ph)
-                out_file.write(
-                    "{}|{}|{}|{}|{}|{}|{}\n".format(
-                        utt,
-                        spk,
-                        language,
-                        norm_text,
-                        " ".join(phones),
-                        " ".join([str(i) for i in tones]),
-                        " ".join([str(i) for i in word2ph]),
+            out_file = open(f'{cleaned_path}-part-{index}', 'w', encoding='utf-8')
+            for line in tqdm(lines):
+                try:
+                    utt, spk, language, text = line.strip().split("|")
+                    if os.path.exists('/workspace'):
+                        splitted = os.path.split(utt)
+                        new_folder = os.path.join('/workspace', os.path.split(splitted[0])[1])
+                        utt = os.path.join(new_folder, splitted[1])
+                    norm_text, phones, tones, word2ph, bert = clean_text_bert(text, language, device=device)
+
+                    assert len(phones) == len(tones)
+                    assert len(phones) == sum(word2ph)
+                    out_file.write(
+                        "{}|{}|{}|{}|{}|{}|{}\n".format(
+                            utt,
+                            spk,
+                            language,
+                            norm_text,
+                            " ".join(phones),
+                            " ".join([str(i) for i in tones]),
+                            " ".join([str(i) for i in word2ph]),
+                        )
                     )
-                )
-                bert_path = utt.replace(".wav", ".bert.pt")
-                os.makedirs(os.path.dirname(bert_path), exist_ok=True)
-                torch.save(bert.cpu(), bert_path)
-            except Exception as error:
-                print("err!", line, error)
+                    bert_path = utt.replace(".wav", ".bert.pt")
+                    os.makedirs(os.path.dirname(bert_path), exist_ok=True)
+                    torch.save(bert.cpu(), bert_path)
+                except Exception as error:
+                    print("err!", line, error)
 
+            out_file.close()
+
+        lines = []
+        for line in tqdm(open(metadata, encoding="utf-8").readlines()):
+            lines.append(line)
+        
+        df_split = chunks(lines, num_device)
+        pool = Pool(num_device)
+        pooled = pool.map(loop, df_split)
+        pool.close()
+        pool.join()
+
+        out_file = open(cleaned_path, 'w', encoding='utf-8')
+        for f in glob(f'{cleaned_path}-part*'):
+            with open(f) as fopen:
+                for line in fopen.readlines():
+                    out_file.write(line)
+                    
         out_file.close()
 
         metadata = cleaned_path
