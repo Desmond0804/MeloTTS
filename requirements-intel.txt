@@ -3,7 +3,7 @@ torch
 torchaudio
 txtsplit
 cached_path
-transformers==4.27.4
+transformers
 num2words==0.5.12
 unidic_lite==1.0.8
 unidic==1.1.0
@@ -29,3 +29,7 @@ tqdm
 tensorboard==2.16.2
 loguru==0.7.2
 python-mecab-ko
+numpy==2.1
+malaya_speech @ git+https://github.com/mesolitica/malaya-speech
+malaya
+phonemizer
